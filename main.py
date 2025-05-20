@@ -1,90 +1,104 @@
 import requests
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin, urlparse
-import signal
-import sys
-import random
+from urllib.parse import urljoin, urlparse, urldefrag
 import time
+import random
+import os
 from collections import deque
 
-# starting URL for the crawler
-start_url = "https://www.apple.com/"
-
-# creates a set to keep track of visited URLs
+# Set to track all visited URLs to avoid duplicates
 visited = set()
 
-# maximum depth for crawling
-maxDepth = 2
+# How deep the crawler can go from the starting page
+maxDepth = 1
 
-# number of characters printed
-charsPrinted = 250
+# How many characters to show per page
+charsPrinted = 1000
 
-# handles Ctrl+C to stop the program
-def signal_handler(sig, frame):
-    print("\nCrawling interrupted by user.")
-    sys.exit(0)
+# The first URL to start crawling from
+start_url = "https://www.apple.com/"
 
-# register the signal handler
-signal.signal(signal.SIGINT, signal_handler)
+# List to store URL and extracted text
+indexed_data = []
 
-# adds a delay before making a new request to avoid overloading the server
+# Name of the folder to save the extracted text
+output_folder = "extractedText"
+
+# Adds a random delay between 1–2 seconds to avoid overwhelming servers
 def crawl_with_delay():
-    # Random sleep time between 1 and 2 seconds
     time.sleep(random.randint(1, 2))
 
-# gets and parses the HTML from the URL
+# Fetches the webpage content and parses it into a BeautifulSoup object
 def getSoup(url):
     try:
-        response = requests.get(url, timeout=30)  # tries to get information from the URL, for 30 seconds
-        response.raise_for_status()  # checks for HTTP errors (4xx, 5xx)
-        return BeautifulSoup(response.text, 'html.parser')  # parses the HTML content
+        response = requests.get(url, timeout=30)  # tries to contact the server for up to 30 seconds
+        response.raise_for_status()  # raises an error for bad responses (like 404 or 500)
+        return BeautifulSoup(response.text, 'html.parser')  # parses HTML content
     except requests.RequestException as e:
         print(f"Error fetching {url}: {e}")
         return None
 
-# extracts and cleans the text from the HTML content
+# Extracts only visible, readable text from a page (removes scripts and styles)
 def textGetter(soup):
-    # Remove script, style, and noscript elements
-    for tag in soup(['script', 'style', 'noscript']):
-        tag.decompose()  # removes the tag and everything inside it
+    for tag in soup(['script', 'style', 'noscript']):  # remove code and formatting tags
+        tag.decompose()
+    return soup.get_text(separator=' ', strip=True)  # clean up whitespace and return text
 
-    # Get and clean the text
-    text = soup.get_text(separator=' ', strip=True)  # adds a space between elements and removes leading/trailing whitespace
-    return text  # returns the cleaned text
+# Cleans a URL by removing any fragment like "#section"
+def clean_url(url):
+    return urldefrag(url)[0]
 
-# the main crawler function using BFS (queue-based approach)
+# Function to save the indexed data to a text file
+def save_index_to_file(data, output_dir="extractedText", filename="website_index.txt"):
+    try:
+        # Create the output directory if it doesn't exist
+        os.makedirs(output_dir, exist_ok=True)
+        filepath = os.path.join(output_dir, filename)
+        with open(filepath, "w", encoding="utf-8") as f:
+            for item in data:
+                f.write(f"URL: {item[0]}\n")
+                f.write(f"Text:\n{item[1]}\n")
+                f.write("-" * 80 + "\n")  # Separator for readability
+        print(f"Indexed data saved to {filepath}")
+    except Exception as e:
+        print(f"Error saving indexed data: {e}")
+
+# The main BFS web crawler function
 def bfsCrawler(start_url):
-    queue = deque()
-    queue.append((start_url, 0))  # each queue item is a tuple (url, depth)
+    queue = deque()  # deque used for FIFO behavior (first-in-first-out)
+    queue.append((start_url, 0))  # store tuple of (url, depth)
+    visited.add(start_url)  # Mark the starting URL as visited
+
+    base_domain = urlparse(start_url).netloc  # get domain of start URL (e.g., 'en.wikipedia.org')
 
     while queue:
-        url, depth = queue.popleft()  # gets the next URL and its depth
+        url, depth = queue.popleft()  # get next URL and its depth from the queue
 
-        if depth > maxDepth or url in visited:  # if we’ve reached max depth or already visited, skip
-            continue
+        print(f"\nVisiting (depth {depth}): {url}")  # log the visit
+        crawl_with_delay()  # Add delay *before* processing the URL
 
-        visited.add(url)  # mark the URL as visited
-        print(f"\nVisiting (depth {depth}): {url}")  # show which page is being visited
+        soup = getSoup(url)  # download and parse the page
+        if soup:  # Only proceed if soup is not None
+            text = textGetter(soup)  # extract visible text from the HTML
+            if text:
+                print(f"Text from {url}:\n{text[:charsPrinted]}...\n")  # print preview of the text
+                indexed_data.append([url, text])  # Store URL and text
 
-        soup = getSoup(url)  # get the parsed HTML
-        if not soup:
-            continue  # skip if there's an error loading the page
+            # Find and follow all links on this page
+            for link in soup.find_all('a', href=True):  # loop through anchor tags with href attributes
+                href = link['href']
+                full_url = clean_url(urljoin(url, href))  # turn relative URLs into full ones and clean them
 
-        text = textGetter(soup)  # extract text from the page
-        if text:  # check if text is not empty
-            print(f"Text from {url}:\n{text[:charsPrinted]}...\n")  # print the first N characters
+                parsed = urlparse(full_url)
 
-        # Find and process all links in the current page
-        for link in soup.find_all('a', href=True):  # find all links with href attribute
-            href = link['href']
-            full_url = urljoin(url, href)  # builds a full absolute URL from a relative one
+                # Only queue links from the same domain and within depth limit
+                if parsed.scheme in ["http", "https"] and parsed.netloc == base_domain and depth + 1 <= maxDepth:
+                    if full_url not in visited:
+                        queue.append((full_url, depth + 1))  # add new URL with increased depth
+                        visited.add(full_url)  # Mark the URL as visited when it's queued
 
-            # check if the domain of the link matches the starting domain
-            if urlparse(full_url).netloc == urlparse(start_url).netloc:
-                if full_url not in visited:  # make sure we haven’t already visited it
-                    queue.append((full_url, depth + 1))  # add the new URL with increased depth
-                    crawl_with_delay()  # adds a delay before crawling the next URL (to be nice to the server)
+    # Call the function to save the indexed data AFTER the loop finishes
+    save_index_to_file(indexed_data)
 
-# starts the crawler from the starting URL
-print(f"Starting crawl from: {start_url}")
+# Run the crawler starting from the given URL
 bfsCrawler(start_url)
