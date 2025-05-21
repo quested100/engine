@@ -10,7 +10,7 @@ from collections import deque
 visited = set()
 
 # How deep the crawler can go from the starting page
-maxDepth = 1
+maxDepth = 2
 
 # How many characters to show per page
 charsPrinted = 1000
@@ -26,7 +26,7 @@ output_folder = "extractedText"
 
 # Adds a random delay between 1–2 seconds to avoid overwhelming servers
 def crawl_with_delay():
-    time.sleep(random.randint(1, 2))
+    time.sleep(random.uniform(0.2, 0.5))
 
 # Fetches the webpage content and parses it into a BeautifulSoup object
 def getSoup(url):
