@@ -7,7 +7,7 @@ import os
 from collections import deque
 
 # How deep the crawler can go from the starting page
-maxDepth = 2
+maxDepth = 1
 
 # How many characters to show per page
 charsPrinted = 100000
